@@ -252,8 +252,13 @@ class BedrockModel(BaseChatModel):
         output_message = response["output"]["message"]
         input_tokens = response["usage"]["inputTokens"]
         output_tokens = response["usage"]["outputTokens"]
+        total_tokens = response["usage"]["totalTokens"]
         finish_reason = response["stopReason"]
-
+        if DEBUG :
+            logger.info("Input tokens: %s", input_tokens)
+            logger.info("Output tokens: %s", output_tokens)
+            logger.info("Total tokens: %s", total_tokens)
+            logger.info("Stop reason: %s", finish_reason)
         chat_response = self._create_response(
             model=chat_request.model,
             message_id=message_id,
@@ -276,8 +281,17 @@ class BedrockModel(BaseChatModel):
             stream_response = self._create_response_stream(
                 model_id=chat_request.model, message_id=message_id, chunk=chunk
             )
+
             if not stream_response:
                 continue
+
+            if DEBUG and stream_response.usage:
+                token_usage = stream_response.usage
+                logger.info("Input tokens: %s", token_usage.prompt_tokens)
+                logger.info("Output tokens: %s", token_usage.completion_tokens)
+                logger.info("Total tokens: %s", token_usage.total_tokens)
+                # logger.info("Stop reason: %s", response['stopReason'])
+
             if DEBUG:
                 logger.info("Proxy response :" + stream_response.model_dump_json())
             if stream_response.choices:
@@ -394,7 +408,7 @@ class BedrockModel(BaseChatModel):
 
     def _reframe_multi_payloard(self, messages: list) -> list:
         """ Receive messages and reformat them to comply with the Claude format
-    
+
 With OpenAI format requests, it's not a problem to repeatedly receive messages from the same role, but
 with Claude format requests, you cannot repeatedly receive messages from the same role.
 
@@ -420,12 +434,12 @@ bedrock_format_messages=[
         reformatted_messages = []
         current_role = None
         current_content = []
-    
+
         # Search through the list of messages and combine messages from the same role into one list
         for message in messages:
             next_role = message['role']
             next_content = message['content']
-    
+
             # If the next role is different from the previous message, add the previous role's messages to the list
             if next_role != current_role:
                 if current_content:
@@ -436,20 +450,20 @@ bedrock_format_messages=[
                 # Switch to the new role
                 current_role = next_role
                 current_content = []
-    
+
             # Add the message content to current_content
             if isinstance(next_content, str):
                 current_content.append({"text": next_content})
             elif isinstance(next_content, list):
                 current_content.extend(next_content)
-    
+
         # Add the last role's messages to the list
         if current_content:
             reformatted_messages.append({
                 "role": current_role,
                 "content": current_content
             })
-    
+
         return reformatted_messages
 
 
