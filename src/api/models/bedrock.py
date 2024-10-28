@@ -37,6 +37,7 @@ from api.schema import (
     Embedding,
 )
 from api.setting import DEBUG, AWS_REGION
+from api.stats import add_token_usage_stats
 
 logger = logging.getLogger(__name__)
 
@@ -100,18 +101,24 @@ class BedrockModel(BaseChatModel):
             "multimodal": True,
             "tool_call": True,
             "stream_tool_call": True,
+            "input_price": 0.00025,
+            "output_price": 0.00125,
         },
         "anthropic.claude-3-5-sonnet-20240620-v1:0": {
             "system": True,
             "multimodal": True,
             "tool_call": True,
             "stream_tool_call": True,
+            "input_price": 0.003,
+            "output_price": 0.015,
         },
         "anthropic.claude-3-5-sonnet-20241022-v2:0": {
             "system": True,
             "multimodal": True,
             "tool_call": True,
             "stream_tool_call": True,
+            "input_price": 0.003,
+            "output_price": 0.015,
         },
         "meta.llama2-13b-chat-v1": {
             "system": True,
@@ -243,6 +250,15 @@ class BedrockModel(BaseChatModel):
             raise HTTPException(status_code=500, detail=str(e))
         return response
 
+    def _get_cost(self, model_id: str, input_tokens: int, output_tokens: int) -> float:
+        """Get the cost of the request based on the model and token usage."""
+        model = self._supported_models.get(model_id)
+        if not model:
+            return 0.0
+        input_price = model.get("input_price", 0.0)
+        output_price = model.get("output_price", 0.0)
+        return (input_tokens * input_price / 1000) + (output_tokens * output_price / 1000)
+
     def chat(self, chat_request: ChatRequest) -> ChatResponse:
         """Default implementation for Chat API."""
 
@@ -254,11 +270,18 @@ class BedrockModel(BaseChatModel):
         output_tokens = response["usage"]["outputTokens"]
         total_tokens = response["usage"]["totalTokens"]
         finish_reason = response["stopReason"]
+        add_token_usage_stats(
+            model=chat_request.model,
+            input=input_tokens,
+            output=output_tokens,
+            cost=self._get_cost(chat_request.model, input_tokens, output_tokens),
+        )
         if DEBUG :
             logger.info("Input tokens: %s", input_tokens)
             logger.info("Output tokens: %s", output_tokens)
             logger.info("Total tokens: %s", total_tokens)
             logger.info("Stop reason: %s", finish_reason)
+
         chat_response = self._create_response(
             model=chat_request.model,
             message_id=message_id,
@@ -285,11 +308,18 @@ class BedrockModel(BaseChatModel):
             if not stream_response:
                 continue
 
-            if DEBUG and stream_response.usage:
+            if  stream_response.usage:
                 token_usage = stream_response.usage
-                logger.info("Input tokens: %s", token_usage.prompt_tokens)
-                logger.info("Output tokens: %s", token_usage.completion_tokens)
-                logger.info("Total tokens: %s", token_usage.total_tokens)
+                add_token_usage_stats(
+                    model=chat_request.model,
+                    input=token_usage.prompt_tokens,
+                    output=token_usage.completion_tokens,
+                    cost=self._get_cost(chat_request.model, token_usage.prompt_tokens, token_usage.completion_tokens),
+                )
+                if DEBUG:
+                    logger.info("Input tokens: %s", token_usage.prompt_tokens)
+                    logger.info("Output tokens: %s", token_usage.completion_tokens)
+                    logger.info("Total tokens: %s", token_usage.total_tokens)
                 # logger.info("Stop reason: %s", response['stopReason'])
 
             if DEBUG:
